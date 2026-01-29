@@ -3,7 +3,7 @@ import cloudinary.api
 
 # Folders you want to wipe
 CATEGORIES = [
-    'campus_blog'
+    'reels'
 ]
 
 

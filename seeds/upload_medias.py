@@ -4,13 +4,13 @@ from app.core.cloudinary import cloudinary
 import cloudinary.uploader
 
 # Base folder where your media files are stored
-MEDIA_BASE_FOLDER = "media_files/campus_blog"
+MEDIA_BASE_FOLDER = "media_files"
 
 # List of allowed categories/folders
 CATEGORIES = [
-    "oau",
-    "unilag",
-    "yabatech",
+    "reels/oau",
+    "reels/unilag",
+    "reels/yabatech",
 ]
 
 
@@ -48,7 +48,7 @@ def upload_file(file_path: str, folder: str):
     else:
         resource_type = "image"
 
-    public_id = f"{folder}_{sanitize_public_id(file_path)}"
+    public_id = f"{sanitize_public_id(file_path)}"
 
 
     try:

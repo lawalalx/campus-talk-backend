@@ -172,7 +172,7 @@ ADMIN_EMAIL = "ab@yopmail.com"
 SCHOOL_BLOG_DATA = [
     {
         "id": "yabatech",
-        "folder": "yabatech",
+        "folder": "reels/yabatech",
         "content": """🎓 Celebrating Excellence: Yaba College of Technology (YABATECH)
 
 Established in 1947, Yaba College of Technology (YABATECH) holds the distinguished honour of being Nigeria’s first higher educational institution. Located in the heart of Yaba, Lagos, the institution has played a foundational role in shaping Nigeria’s technical and professional education landscape for over seven decades.
@@ -183,7 +183,7 @@ Beyond academics, YABATECH is known for pioneering initiatives such as its Centr
     },
     {
         "id": "ileife",
-        "folder": "oau",
+        "folder": "reels/oau",
         "content": """🏛️ Discover Obafemi Awolowo University (OAU): The Citadel of Wisdom
 
 Obafemi Awolowo University (OAU), located in the historic city of Ile-Ife, Osun State, is one of Nigeria’s most prestigious and intellectually vibrant universities. Founded in 1961 as the University of Ife, the institution was later renamed in honour of Chief Obafemi Awolowo, a renowned nationalist and advocate of education-driven development.
@@ -194,7 +194,7 @@ With a strong culture of research, critical thinking, and social responsibility,
     },
     {
         "id": "unilag",
-        "folder": "unilag",
+        "folder": "reels/unilag",
         "content": """🎓 Discover the University of Lagos (UNILAG): A Legacy of Excellence
 
 The University of Lagos (UNILAG) was established in 1962 as one of Nigeria’s first generation universities, with a mandate to provide high-quality education and advance research for national development. Situated in Akoka, Lagos, the university occupies a strategic location within Nigeria’s commercial and innovation hub.
@@ -210,7 +210,7 @@ async def fetch_cloudinary_images(folder: str) -> list[str]:
     try:
         result = cloudinary.api.resources(
             type="upload",
-            resource_type="image",
+            resource_type="video",
             prefix=folder,
             max_results=30,
         )
@@ -255,7 +255,7 @@ async def seed_school_blogs():
                 post = Post(
                     author_id=admin.id,
                     content=f"{school['content']}\n\nBlog #{i}",
-                    post_type=PostType.BLOG,
+                    post_type=PostType.REEL,
                     privacy=PostPrivacy.PUBLIC,
                     school_scope=institution.id,
                 )
@@ -267,7 +267,7 @@ async def seed_school_blogs():
                     session.add(
                         Media(
                             post_id=post.id,
-                            media_type=MediaType.IMAGE,
+                            media_type=MediaType.VIDEO,
                             url=url,
                             file_metadata={"seed": True},
                         )
