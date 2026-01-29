@@ -4,22 +4,52 @@ from app.core.cloudinary import cloudinary
 import cloudinary.uploader
 
 # Base folder where your media files are stored
-MEDIA_BASE_FOLDER = "media_files"
+MEDIA_BASE_FOLDER = "media_files/campus_blog"
 
 # List of allowed categories/folders
 CATEGORIES = [
-    "reels",
+    "oau",
+    "unilag",
+    "yabatech",
 ]
 
-def upload_file(file_path: str, folder: str):
-    """
-    Uploads a single file (image or video) to Cloudinary in the given folder.
-    Returns the secure URL if successful, else None.
-    """
-    mime_type, _ = mimetypes.guess_type(file_path)
-    resource_type = "video" if mime_type and mime_type.startswith("video") else "image"
 
-    public_id = os.path.splitext(os.path.basename(file_path))[0]
+import re
+import unicodedata
+import os
+
+def sanitize_public_id(file_path: str) -> str:
+    name = os.path.splitext(os.path.basename(file_path))[0]
+
+    # Normalize unicode (remove emojis & weird chars)
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode("ascii")
+
+    # Replace spaces with underscores
+    name = name.strip().replace(" ", "_")
+
+    # Remove anything not allowed
+    name = re.sub(r"[^a-zA-Z0-9_\-]", "", name)
+
+    # Prevent empty or trailing underscore
+    name = name.strip("_")
+
+    return name or "media"
+
+
+def upload_file(file_path: str, folder: str):
+    mime_type, _ = mimetypes.guess_type(file_path)
+    extension = os.path.splitext(file_path)[1].lower()
+
+    if mime_type and mime_type.startswith("video"):
+        resource_type = "video"
+    elif extension == ".svg":
+        resource_type = "image"
+    else:
+        resource_type = "image"
+
+    public_id = f"{folder}_{sanitize_public_id(file_path)}"
+
 
     try:
         result = cloudinary.uploader.upload(
@@ -34,6 +64,9 @@ def upload_file(file_path: str, folder: str):
     except Exception as e:
         print(f"❌ Failed to upload {file_path}: {e}")
         return None
+
+
+
 
 
 def upload_media_folder():

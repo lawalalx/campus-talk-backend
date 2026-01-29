@@ -19,6 +19,7 @@ class UserRole(str, enum.Enum):
 class PostType(str, enum.Enum):
     POST = "post"
     REEL = "reel"
+    BLOG = "blog"
 
 
 class PostPrivacy(str, enum.Enum):
