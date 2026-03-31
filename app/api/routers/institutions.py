@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, or_, true
 from typing import List, Optional
 
 from app.api.deps import pagination_params
 from app.db.session import get_session
-from app.core.auth import get_current_user_dependency
+from app.core.auth import get_current_user_dependency, get_optional_current_user_dependency
 from app.core.config import settings
-from app.db.models import Institution, Media, MediaType, Post, PostType, UploadedDocument, UserRole, PostPrivacy, StudentProfile
+from app.db.models import Institution, Media, MediaType, Post, PostType, UploadedDocument, UserRole, PostPrivacy, StudentProfile, User
 from app.schemas.institution import InstitutionPublic, UploadedDocumentCreate, UploadedDocumentPublic, InstitutionTimelineResponse
 from app.schemas.post import PostPublic
 from app.schemas.auth import TokenUser
@@ -19,6 +20,59 @@ from app.tasks.media_tasks import process_video_thumbnail
 # from app.services.rag_service import ingest_document_background
 
 router = APIRouter()
+
+
+def _is_admin(current_user: Optional[TokenUser]) -> bool:
+    if not current_user:
+        return False
+    return current_user.role == UserRole.ADMIN or current_user.role == UserRole.ADMIN.value
+
+
+async def _get_user_institution_ids(session: AsyncSession, user_id: str) -> set[str]:
+    user = await session.get(
+        User,
+        user_id,
+        options=[
+            selectinload(User.student_profile),
+            selectinload(User.institution_profile),
+        ],
+    )
+    if not user:
+        return set()
+
+    institution_ids: set[str] = set()
+    if user.student_profile and user.student_profile.institution_id:
+        institution_ids.add(user.student_profile.institution_id)
+    if user.institution_profile and user.institution_profile.institution_id:
+        institution_ids.add(user.institution_profile.institution_id)
+
+    return institution_ids
+
+
+async def _build_institution_feed_visibility_filter(
+    session: AsyncSession,
+    current_user: Optional[TokenUser],
+):
+    if _is_admin(current_user):
+        return true()
+
+    if not current_user:
+        return Post.privacy == PostPrivacy.PUBLIC
+
+    institution_ids = await _get_user_institution_ids(session, current_user.id)
+    visibility_conditions = [
+        Post.privacy == PostPrivacy.PUBLIC,
+        Post.author_id == current_user.id,
+    ]
+    if institution_ids:
+        visibility_conditions.append(
+            and_(
+                Post.privacy == PostPrivacy.SCHOOL_ONLY,
+                Post.school_scope.in_(institution_ids),
+            )
+        )
+
+    return or_(*visibility_conditions)
 
 
 @router.get("/{institution_id}", response_model=InstitutionPublic)
@@ -48,6 +102,7 @@ async def get_posts_by_institution(
     institution_id: str,
     session: AsyncSession = Depends(get_session),
     pagination: pagination_params = Depends(),
+    current_user: Optional[TokenUser] = Depends(get_optional_current_user_dependency(settings=settings)),
     post_type: Optional[PostType] = None
 ):
     """
@@ -56,6 +111,7 @@ async def get_posts_by_institution(
     stmt = (
         select(Post)
         .where(Post.school_scope == institution_id)
+        .where(await _build_institution_feed_visibility_filter(session, current_user))
         .options(
             selectinload(Post.author),
             selectinload(Post.media)
@@ -109,7 +165,7 @@ async def create_institution_post(
         content=content,
         post_type=post_type,
         privacy=privacy,
-        school_scope=institution_id, 
+        school_scope=None if mirror_to_general else institution_id,
     )
     session.add(post)
     await session.flush() # Get post.id for media links
@@ -273,7 +329,7 @@ async def get_my_institution_timeline(
     # Get posts for this institution (school-scoped posts only)
     posts_statement = (
         select(Post)
-        .where(Post.school_scope == institution.institution_name)
+        .where(Post.school_scope == institution.id)
         .options(selectinload(Post.author), selectinload(Post.media), selectinload(Post.comments))
         .order_by(Post.created_at.desc())
     )

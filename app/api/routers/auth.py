@@ -1,4 +1,4 @@
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, List
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status, Response, BackgroundTasks, Query
 from datetime import timedelta
 from app.core.cloudinary import cloudinary
@@ -45,6 +45,12 @@ import resend
 router = APIRouter()
 user_service = UserService()
 mail_service = MailService(resend=resend, settings=settings)  # resend client injected later
+
+
+@router.get("/roles", response_model=List[str])
+async def get_all_roles():
+    """Fetch all available user roles."""
+    return [role.value for role in UserRole]
 
 
 # ==============================

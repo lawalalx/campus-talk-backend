@@ -2,15 +2,28 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, or_, true, delete
 from sqlmodel import select
 from typing import List, Optional
 import cloudinary
 import cloudinary.uploader
 
 from app.core.config import settings
-from app.core.auth import get_current_user_dependency
+from app.core.auth import get_current_user_dependency, get_optional_current_user_dependency
 from app.db.session import get_session
-from app.db.models import Media, MediaType, PostPrivacy, User, Post, UserRole, PostType
+from app.db.models import (
+    Media,
+    MediaType,
+    PostPrivacy,
+    User,
+    Post,
+    UserRole,
+    PostType,
+    Comment,
+    Like,
+    Complaint,
+    Sentiment,
+)
 from app.schemas.auth import TokenUser
 from app.schemas.post import PostCreate, PostPublic, PresignedUrlResponse
 from app.db.repositories.post_repo import post_repo
@@ -19,6 +32,76 @@ from app.api.deps import pagination_params
 from app.tasks.media_tasks import process_video_thumbnail
 
 router = APIRouter()
+
+
+async def _get_user_institution_ids(session: AsyncSession, user_id: str) -> set[str]:
+    """Return institution IDs linked to a user."""
+    user = await session.get(
+        User,
+        user_id,
+        options=[
+            selectinload(User.student_profile),
+            selectinload(User.institution_profile),
+        ],
+    )
+
+    if not user:
+        return set()
+
+    institution_ids: set[str] = set()
+
+    if user.institution_profile:
+        if user.institution_profile.institution_id:
+            institution_ids.add(user.institution_profile.institution_id)
+
+    if user.student_profile:
+        if user.student_profile.institution_id:
+            institution_ids.add(user.student_profile.institution_id)
+
+    return institution_ids
+
+
+def _is_admin(current_user: Optional[TokenUser]) -> bool:
+    if not current_user:
+        return False
+    return current_user.role == UserRole.ADMIN or current_user.role == UserRole.ADMIN.value
+
+
+async def _build_feed_visibility_filter(
+    session: AsyncSession,
+    current_user: Optional[TokenUser],
+):
+    """Build SQL filter for post visibility rules across feed endpoints."""
+    if _is_admin(current_user):
+        return true()
+
+    if not current_user:
+        return Post.privacy == PostPrivacy.PUBLIC
+
+    institution_ids = await _get_user_institution_ids(session, current_user.id)
+    visibility_conditions = [
+        Post.privacy == PostPrivacy.PUBLIC,
+        Post.author_id == current_user.id,
+    ]
+
+    if institution_ids:
+        visibility_conditions.append(
+            and_(
+                Post.privacy == PostPrivacy.SCHOOL_ONLY,
+                Post.school_scope.in_(institution_ids),
+            )
+        )
+
+    return or_(*visibility_conditions)
+
+
+def _can_delete_post(current_user: TokenUser, post: Post) -> bool:
+    """Only post author or admin can delete a post."""
+    if post.author_id == current_user.id:
+        return True
+    if current_user.role == UserRole.ADMIN:
+        return True
+    return False
 
 
 @router.post("/", response_model=PostPublic, status_code=status.HTTP_201_CREATED)
@@ -65,32 +148,21 @@ async def create_post(
     # -----------------------------
     # GET INSTITUTION ID
     # -----------------------------
-    final_institution_id = None
+    final_institution_scope = None
     if is_school_scope:
-        user = await session.get(
-            User,
-            current_user.id,
-            options=[
-                selectinload(User.student_profile),
-                selectinload(User.institution_profile),
-            ],
-        )
-        
-        # Check profiles for the ID
-        if user.institution_profile:
-            final_institution_id = user.institution_profile.institution_id
-        elif user.student_profile:
-            final_institution_id = user.student_profile.institution_id
-            
-        if not final_institution_id:
-             raise HTTPException(400, "User is not linked to a valid institution")
+        user_scopes = await _get_user_institution_ids(session, current_user.id)
+        if not user_scopes:
+            raise HTTPException(400, "User is not linked to a valid institution")
+
+        # Store school scope as institution_id for consistent filtering.
+        final_institution_scope = sorted(user_scopes)[0]
 
     post = Post(
         author_id=current_user.id,
         content=content,
         post_type=post_type,
         privacy=privacy,
-        school_scope=final_institution_id,
+        school_scope=final_institution_scope,
     )
 
     session.add(post)
@@ -210,6 +282,7 @@ async def read_posts(
     *,
     session: AsyncSession = Depends(get_session),
     pagination: pagination_params = Depends(),
+    current_user: Optional[TokenUser] = Depends(get_optional_current_user_dependency(settings=settings)),
     school_scope: Optional[str] = None,
 ):
     """
@@ -219,6 +292,7 @@ async def read_posts(
     stmt = (
         select(Post)
         .where(Post.post_type == PostType.POST)
+        .where(await _build_feed_visibility_filter(session, current_user))
         .options(selectinload(Post.author))
         .order_by(Post.created_at.desc())
     )
@@ -235,11 +309,22 @@ async def read_reels(
     *,
     session: AsyncSession = Depends(get_session),
     pagination: pagination_params = Depends(),
+    current_user: Optional[TokenUser] = Depends(get_optional_current_user_dependency(settings=settings)),
 ):
     """
     Retrieve all posts of type 'reel'.
     """
-    return await post_repo.get_reels(session, skip=pagination.skip, limit=pagination.limit)
+    stmt = (
+        select(Post)
+        .where(Post.post_type == PostType.REEL)
+        .where(await _build_feed_visibility_filter(session, current_user))
+        .options(selectinload(Post.author))
+        .order_by(Post.created_at.desc())
+        .offset(pagination.skip)
+        .limit(pagination.limit)
+    )
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
 
 @router.get("/{post_id}", response_model=PostPublic)
@@ -247,6 +332,7 @@ async def read_post(
     *,
     post_id: str,
     session: AsyncSession = Depends(get_session),
+    current_user: Optional[TokenUser] = Depends(get_optional_current_user_dependency(settings=settings)),
 ):
     """
     Get a single post by its ID, including author info.
@@ -254,6 +340,14 @@ async def read_post(
     post = await post_repo.get_by_id_with_author(session, id=post_id)
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
+
+    if not _is_admin(current_user):
+        visibility_filter = await _build_feed_visibility_filter(session, current_user)
+        visibility_stmt = select(Post.id).where(Post.id == post_id).where(visibility_filter)
+        visible = (await session.execute(visibility_stmt)).scalars().first()
+        if not visible:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this post.")
+
     return post
 
 
@@ -266,6 +360,7 @@ async def get_posts_by_institution(
     institution_id: str,
     session: AsyncSession = Depends(get_session),
     pagination: pagination_params = Depends(),
+    current_user: Optional[TokenUser] = Depends(get_optional_current_user_dependency(settings=settings)),
     post_type: Optional[PostType] = None
 ):
     """
@@ -274,6 +369,7 @@ async def get_posts_by_institution(
     stmt = (
         select(Post)
         .where(Post.school_scope == institution_id)
+        .where(await _build_feed_visibility_filter(session, current_user))
         .options(
             selectinload(Post.author),
             selectinload(Post.media)
@@ -299,18 +395,49 @@ async def delete_post(
     post_id: str,
     current_user: TokenUser = Depends(get_current_user_dependency(settings=settings)),
 ):
-    """
-    Delete a post. Only the post author or an admin can delete.
-    """
+    """Delete a post if the caller is the author or an admin."""
     post = await post_repo.get(session, id=post_id)
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
 
-    if post.author_id != current_user.id and current_user.role != UserRole.ADMIN:
+    if not _can_delete_post(current_user, post):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to delete this post.",
         )
+
+    # Delete dependent rows explicitly to avoid FK violations in schemas
+    # where DB-level ON DELETE CASCADE is not configured.
+    comment_ids = (
+        await session.execute(select(Comment.id).where(Comment.post_id == post.id))
+    ).scalars().all()
+
+    await session.execute(delete(Media).where(Media.post_id == post.id))
+
+    if comment_ids:
+        await session.execute(
+            delete(Like).where(
+                or_(
+                    Like.post_id == post.id,
+                    Like.comment_id.in_(comment_ids),
+                )
+            )
+        )
+        await session.execute(
+            delete(Complaint).where(
+                or_(
+                    Complaint.reported_post_id == post.id,
+                    Complaint.reported_comment_id.in_(comment_ids),
+                )
+            )
+        )
+        await session.execute(delete(Sentiment).where(Sentiment.comment_id.in_(comment_ids)))
+    else:
+        await session.execute(delete(Like).where(Like.post_id == post.id))
+        await session.execute(delete(Complaint).where(Complaint.reported_post_id == post.id))
+
+    await session.execute(delete(Sentiment).where(Sentiment.post_id == post.id))
+    await session.execute(delete(Comment).where(Comment.post_id == post.id))
 
     await session.delete(post)
     await session.commit()

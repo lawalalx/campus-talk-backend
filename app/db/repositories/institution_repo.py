@@ -27,8 +27,8 @@ class InstitutionRepository:
         return len(institution.students) if hasattr(institution, "students") else 0
 
     async def get_posts_count(self, session: AsyncSession, institution: Institution) -> int:
-        # Count posts that have school_scope matching institution name
-        statement = select(Post).where(Post.school_scope == institution.institution_name)
+        # Count posts that have school_scope matching institution id
+        statement = select(Post).where(Post.school_scope == institution.id)
         # use a count query instead of loading all rows
         result = await session.execute(statement)
         return result.scalars().all().__len__()

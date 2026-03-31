@@ -1,0 +1,16 @@
+alembic revision --autogenerate -m "create initial tables"
+
+alembic upgrade head
+
+postgresql://neondb_owner:npg_gY6DVOFolZw3@ep-summer-base-adbcqzrk-pooler.c-2.us-east-1.aws.neon.tech/neondb
+
+DELETE FROM studentprofile USING "user" WHERE studentprofile.user_id = "user".id AND "user".email = 'johndoe123@co.com'; DELETE FROM "user" WHERE email = 'johndoe123@co.com';
+
+
+DELETE FROM post WHERE author_id = (SELECT id FROM "user" WHERE email = 'johndoe123@co.com');
+DELETE FROM studentprofile WHERE user_id = (SELECT id FROM "user" WHERE email = 'johndoe123@co.com');
+DELETE FROM "user" WHERE email = 'johndoe123@co.com';
+
+python -m app.main
+
+uvicorn app.main:app --port 8001 --reload
