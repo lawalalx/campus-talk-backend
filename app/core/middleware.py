@@ -138,7 +138,7 @@ def register_middleware(app: FastAPI):
         "campus-talk-frontend.vercel.app",
         "campus-tok-frontend.vercel.app",
         "campus-talk-backend-bbgb.onrender.com",
-        "campus-talk-backend-bbgb.onrender.com"
+        "campus-talk-backend-rk1j.onrender.com"
     ])
 
 
