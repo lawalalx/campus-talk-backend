@@ -36,7 +36,10 @@ from app.schemas.auth import (
     UserLoginModel,
     LoginResponseModel,
     VerificationMailSchemaResponse
+    , UserProfileUpdateModel
 )
+
+
 from app.db.models import InstitutionProfile, StudentProfile, User, Institution, UserRole
 from app.core.config import settings
 from app.utils.resend_email import MailService
@@ -46,6 +49,25 @@ router = APIRouter()
 user_service = UserService()
 mail_service = MailService(resend=resend, settings=settings)  # resend client injected later
 
+
+
+
+@router.put("/profile/update", response_model=LoginResponseModel)
+async def update_profile(
+    profile_update: UserProfileUpdateModel,
+    current_user: Annotated[TokenUser, Depends(get_current_user_dependency(settings=settings))],
+    session: AsyncSession = Depends(get_session),
+):
+    """Update user profile details."""
+    user = await user_repo.get_by_email(session, email=current_user.email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    updated_user = await user_repo.update_profile(session, user=user, update_data=profile_update.dict(exclude_unset=True))
+    return LoginResponseModel(
+        status=True,
+        message="Profile updated successfully",
+        data=UserCreateRead.model_validate(updated_user)
+    )
 
 @router.get("/roles", response_model=List[str])
 async def get_all_roles():
@@ -181,38 +203,7 @@ async def upload_profile_picture(
     session: AsyncSession = Depends(get_session),
     file: UploadFile = File(...),
 ):
-    allowed_extensions = ["jpg", "jpeg", "png"]
-    file_extension = file.filename.split(".")[-1].lower()
-
-    if file_extension not in allowed_extensions:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid file type. Only jpg, jpeg, and png are allowed."
-        )
-
-    # Upload file to Cloudinary
-    try:
-        upload_result = cloudinary.uploader.upload(
-            file.file,
-            folder="profile_pictures",
-            public_id=f"{current_user.id}_{file.filename.split('.')[0]}"
-        )
-        image_url = upload_result.get("secure_url")
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Image upload failed: {str(e)}"
-        )
-
-    # Update user's profile picture in DB
-    user = await user_repo.get_by_email(session, email=current_user.email)
-    user.profile_picture = image_url
-    await session.commit()
-    await session.refresh(user)
-
-
-    print("\n\nPROFILE PICTURE:", user.profile_picture)
+    user = await user_service.upload_profile_picture(file, current_user, session)
     return LoginResponseModel(
         status=True,
         message="Profile picture uploaded successfully",
@@ -244,72 +235,11 @@ async def create_student_profile(
     response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    Create a student profile for the current user.
-
-    Restrictions:
-    - User email must be verified.
-    - User role cannot be INSTITUTION.
-    - Cannot create profile if one already exists.
-
-    Steps:
-    1. Validate current user email and role.
-    2. Check for existing student profile.
-    3. Save new student profile.
-    4. Update user role to STUDENT.
-
-    Args:
-        student_profile_in (UserCreateStudentModel): Input data for student profile.
-        current_user (TokenUser): Authenticated current user.
-        session (AsyncSession): SQLAlchemy async session.
-
-    Returns:
-        LoginResponseModel: Status, message, and created student profile data.
-    """
-    if not current_user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email not verified. Please kindly verify your email before creating a student profile."
-        )
-
-    if current_user.role == UserRole.INSTITUTION:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Institution cannot create student profile."
-        )
-
-    db_user = await student_profile_repo.get_by_user_id(session, user_id=current_user.id)
-    if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Student profile already exists."
-        )
-    
-    student_obj = StudentProfile(
-        user_id=current_user.id,
-        institution_id=student_profile_in.institution_id,
-        institution_name=student_profile_in.institution_name,
-        matric_number=student_profile_in.matric_number,
-        faculty=student_profile_in.faculty,
-        department=student_profile_in.department,
-        educational_level=student_profile_in.educational_level,
-    )
-    created_student = await student_profile_repo.create(session, obj_in=student_obj)
-
-    user = await user_repo.get_by_email(session, email=current_user.email)
-    user.role = UserRole.STUDENT
-    session.add(user)       # <-- make sure SQLAlchemy tracks this change
-    await session.commit()  # <-- persist it to DB
-    await session.refresh(user)
-
+    created_student, user = await user_service.create_student_profile(student_profile_in, current_user, session)
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     new_access_token = create_access_token(user=user, expires_delta=access_token_expires)
     response = verify_email_response(user, new_access_token, response)
-
-    await session.commit()
-
     logger.info(f"Created student {created_student.id}")
-
     return LoginResponseModel(
         status=True,
         message="Student profile created successfully",
@@ -332,97 +262,10 @@ async def create_institution_profile(
     response: Response,
     session: AsyncSession = Depends(get_session),
 ):
-    """
-    Create an institution profile for the current user.
-
-    Restrictions:
-    - User email must be verified.
-    - User role cannot be STUDENT.
-    - Cannot create profile if one already exists.
-
-    Steps:
-    1. Validate current user email and role.
-    2. Check for existing institution profile.
-    3. Save new institution profile.
-    4. Update user role to INSTITUTION.
-
-    Args:
-        institution_profile_in (UserCreateInstitutionModel): Input data for institution profile.
-        current_user (TokenUser): Authenticated current user.
-        session (AsyncSession): SQLAlchemy async session.
-
-    Returns:
-        LoginResponseModel: Status, message, and created institution profile data.
-    """
-    print(institution_profile_in, "\n\n")
-    if not current_user.is_verified:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email not verified. Please kindly verify your email before creating an institution profile."
-        )
-
-    if current_user.role == UserRole.STUDENT:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Student cannot create institution profile."
-        )
-
-    # Check if institution profile already exists. do a direct query to the iinstitutionProfile table
-    query = select(InstitutionProfile).where(InstitutionProfile.user_id == current_user.id)
-    result = await session.execute(query)
-    db_user = result.scalar_one_or_none()
-
-    if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Institution profile already exists."
-        )
-
-    institution_obj_profile = InstitutionProfile(
-        user_id=current_user.id,
-        institution_id= institution_profile_in.institution_id,
-        institution_name=institution_profile_in.institution_name,
-        institution_email=institution_profile_in.institution_email
-    )
-
-    # 1. Fetch the user object from the DB to modify it
-    user = await user_repo.get_by_email(session, email=current_user.email)
-    if not user:
-         raise HTTPException(status_code=404, detail="User not found")
-
-    # 2. Update the User Role
-    user.role = UserRole.INSTITUTION
-    session.add(user)
-
-    # 3. Create the InstitutionProfile object
-    institution_obj_profile = InstitutionProfile(
-        user_id=user.id, # Use user.id directly
-        institution_id=institution_profile_in.institution_id,
-        institution_name=institution_profile_in.institution_name,
-        institution_email=institution_profile_in.institution_email,
-        profile_picture=user.profile_picture # Sync the picture here
-    )
-
-    # 4. Add the profile to the session
-    session.add(institution_obj_profile)
-
-    # 5. Commit EVERYTHING at once
-    # This ensures both the user role update and profile creation succeed together
-    await session.commit()
-    
-    # 6. Refresh to get IDs and generated fields
-    await session.refresh(user)
-    await session.refresh(institution_obj_profile)
-
-    # 7. Generate new token with updated role
+    institution_obj_profile, user = await user_service.create_institution_profile(institution_profile_in, current_user, session)
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     new_access_token = create_access_token(user=user, expires_delta=access_token_expires)
-    
-    # This helper usually sets the cookie in the response
     verify_email_response(user, new_access_token, response)
-
-    logger.info(f"Created institution profile {institution_obj_profile.id} for user {user.id}")
-
     return LoginResponseModel(
         status=True,
         message="Institution profile created successfully",
@@ -509,6 +352,7 @@ async def read_users_me(
     If the user has an institution profile, include institution profile details.
     """
 
+
     user_data = await user_repo.get_by_email(session, email=current_user.email)
     result = {
         "user": current_user.dict(),
@@ -520,7 +364,11 @@ async def read_users_me(
         query = select(StudentProfile).where(StudentProfile.user_id == current_user.id)
         student_profile = (await session.execute(query)).scalar_one_or_none()
         if student_profile:
-            result["student_profile"] = StudentProfileRead.model_validate(student_profile).model_dump()
+            student_profile_data = StudentProfileRead.model_validate(student_profile).model_dump()
+            # Always use user's profile picture if student_profile.profile_picture is None
+            if not student_profile_data.get("profile_picture"):
+                student_profile_data["profile_picture"] = user_data.profile_picture
+            result["student_profile"] = student_profile_data
             # Include the institution info if available
             if student_profile.institution_id:
                 inst_query = select(Institution).where(Institution.id == student_profile.institution_id)

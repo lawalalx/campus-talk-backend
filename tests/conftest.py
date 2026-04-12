@@ -10,8 +10,9 @@ from sqlmodel import SQLModel
 from app.main import app
 from app.db.session import get_session
 
-# Use an in-memory SQLite database for testing
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+# Use a file-based SQLite database for testing to avoid greenlet issues
+TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 
 engine = create_async_engine(TEST_DATABASE_URL, echo=True, future=True)
 AsyncTestingSessionLocal = sessionmaker(
@@ -45,5 +46,5 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://localhost") as c:
         yield c

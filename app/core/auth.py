@@ -136,10 +136,19 @@ def verify_email_response(user, campustalk_access_token: str, response: Response
         secure=True,
     )
 
+    # Return token and user info in response
     return LoginResponseModel(
         status=True,
         message="User successfully logged in",
-        data=UserCreateRead.model_validate(user)
+        data=TokenUser(
+            full_name=getattr(user, "full_name", None),
+            email=getattr(user, "email", None),
+            id=str(getattr(user, "id", "")),
+            is_verified=getattr(user, "is_verified", False),
+            role=str(getattr(user, "role", None)),
+            campustalk_access_token=campustalk_access_token,
+            token_type="bearer"
+        )
     )
 
 

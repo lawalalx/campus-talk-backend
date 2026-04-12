@@ -8,13 +8,15 @@ from fastapi import status
 async def test_register_user(client: AsyncClient, db_session: AsyncSession):
     user_data = {
         "full_name": "Test User",
-        "username": "testuser",
         "email": "test@example.com",
-        "password": "strongpassword"
+        "password": "strongpassword",
+        "role": "general"
     }
-    response = await client.post("/api/v1/auth/register", data=user_data)
+    response = await client.post("/api/v1/auth/register", json=user_data)
+    if response.status_code != status.HTTP_201_CREATED:
+        print("Register response:", response.status_code, response.text)
     assert response.status_code == status.HTTP_201_CREATED
-    data = response.json()
+    data = response.json()["data"]
     assert data["email"] == user_data["email"]
     assert "id" in data
 
@@ -23,21 +25,21 @@ async def test_login_for_access_token(client: AsyncClient, db_session: AsyncSess
     # First, register a user
     user_data = {
         "full_name": "loginuser User",
-        "username": "loginuser",
         "email": "login@example.com",
-        "password": "strongpassword"
+        "password": "strongpassword",
+        "role": "general"
     }
-    await client.post("/api/v1/auth/register", data=user_data)
+    await client.post("/api/v1/auth/register", json=user_data)
 
     # Then, try to log in
     login_data = {
         "email": "login@example.com",
-        "username": "loginuser",
         "password": "strongpassword"
     }
-    response = await client.post("/api/v1/auth/login", data=login_data)
+    response = await client.post("/api/v1/auth/login", json=login_data)
+    if response.status_code != status.HTTP_200_OK:
+        print("Login response:", response.status_code, response.text)
     assert response.status_code == status.HTTP_200_OK
-    print(f"response.json() = {response.json()}\n\n\n\n")
-    data = response.json()
+    data = response.json()["data"]
     assert "campustalk_access_token" in data
     assert data["token_type"] == "bearer"

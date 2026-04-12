@@ -1,3 +1,4 @@
+
 # app/db/repositories/user_repo.py
 from typing import Optional
 from sqlmodel import select
@@ -17,6 +18,14 @@ class UserRepository(BaseRepository[User]):
         statement = select(User).where(User.username == username).options(selectinload(User.student_profile), selectinload(User.institution_profile))
         result = await session.execute(statement)
         return result.scalars().first()
+    
+    async def update_profile(self, session: AsyncSession, user: User, update_data: dict) -> User:
+        for k, v in update_data.items():
+            setattr(user, k, v)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return user
 
 user_repo = UserRepository(User)
 

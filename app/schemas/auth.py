@@ -6,6 +6,15 @@ from app.db.models import UserRole
 
 
 
+class UserProfileUpdateModel(BaseModel):
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    profile_picture: Optional[str] = None
+    # Add more fields as needed
+
+
+
+
 class UserBase(BaseModel):
     full_name: str
     email: EmailStr
@@ -19,9 +28,9 @@ class AdminCreate(UserBase):
 
 
 class UserCreateGeneralModel(BaseModel):
-    full_name: Optional[str] = None
-    email:  Optional[EmailStr] = None
-    role: Optional[UserRole] = UserRole.GENERAL
+    full_name: str = None
+    email:  EmailStr = None
+    role: UserRole = UserRole.GENERAL
     password: str
 
 

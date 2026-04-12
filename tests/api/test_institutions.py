@@ -127,9 +127,10 @@ async def test_institution_post_creation_admin_only(
     token = create_access_token(general_user)
 
     # Try to create post as general user (should fail)
+
     response = await client.post(
         "/api/v1/institutions/test-inst2/posts",
-        params={"content": "This should fail", "post_type": "post"},
+        data={"content": "This should fail", "post_type": "post"},
         headers={"Authorization": f"Bearer {token}"},
     )
 
