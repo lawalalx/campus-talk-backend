@@ -48,6 +48,7 @@ allowed_origins = [
     "https://campus-talk-frontend.vercel.app",
     "https://campus-tok-frontend.vercel.app",
     "https://campus-talk-backend-bbgb.onrender.com/",
+    "*.onrender.com",
 ]
 
 
@@ -136,6 +137,7 @@ def register_middleware(app: FastAPI):
         "talk-lgsa.onrender.com",
         "campus-talk-frontend.vercel.app",
         "campus-tok-frontend.vercel.app",
+        "campus-talk-backend-bbgb.onrender.com",
         "campus-talk-backend-bbgb.onrender.com"
     ])
 
