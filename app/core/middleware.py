@@ -151,8 +151,6 @@ def register_middleware(app: FastAPI):
 
 
 
-
-
 from pydantic import BaseModel
 from sqlalchemy.ext.declarative import DeclarativeMeta
 
