@@ -15,7 +15,17 @@ from app.db.models import User, UserRole
 from app.errors import UnAuthenticated, UserNotFound, InvalidToken
 
 
-passwd_context = CryptContext(schemes=["bcrypt"])
+# passwd_context = CryptContext(schemes=["bcrypt"])
+
+passwd_context = CryptContext(
+    schemes=["bcrypt_sha256"],
+    deprecated="auto"
+)
+
+
+
+
+
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 logger = logging.getLogger(__name__)
 
