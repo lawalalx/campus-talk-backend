@@ -323,7 +323,15 @@ async def read_posts(
     for post in posts:
         post_dict = post.__dict__.copy()
         post_dict['author'] = post.author
-        post_dict['media'] = post.media
+        # Convert ORM media objects to dicts matching MediaCreate
+        post_dict['media'] = [
+            {
+                "media_type": m.media_type,
+                "url": m.url,
+                "file_metadata": m.file_metadata
+            }
+            for m in post.media
+        ]
         post_dict['likes_count'] = likes_count_map.get(post.id, 0)
         post_dict['is_liked'] = user_id in user_liked_map.get(post.id, set()) if user_id else False
         post_list.append(PostPublic(**post_dict))
@@ -382,7 +390,14 @@ async def read_post(
         is_liked = await session.scalar(select(Like).where(Like.post_id == post_id, Like.user_id == user_id).exists())
     post_dict = post.__dict__.copy()
     post_dict['author'] = post.author
-    post_dict['media'] = post.media
+    post_dict['media'] = [
+        {
+            "media_type": m.media_type,
+            "url": m.url,
+            "file_metadata": m.file_metadata
+        }
+        for m in post.media
+    ]
     post_dict['likes_count'] = likes_count or 0
     post_dict['is_liked'] = is_liked
     return PostPublic(**post_dict)
