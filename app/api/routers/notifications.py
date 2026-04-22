@@ -16,7 +16,9 @@ from app.core.config import settings
 
 router = APIRouter()
 
+
 @router.get("/me", response_model=List[NotificationPublic])
+@router.get("/", response_model=List[NotificationPublic])
 async def get_my_notifications(
     session: AsyncSession = Depends(get_session),
     pagination: pagination_params = Depends(),

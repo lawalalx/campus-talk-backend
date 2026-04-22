@@ -274,7 +274,11 @@ async def get_presigned_upload_url(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate upload URL. Please try again later.",
         )
-    return {"upload_url": url_data["upload_url"], "file_key": url_data["file_key"]}
+    upload_url = url_data["upload_url"]
+    # Fix internal Docker hostname for local dev
+    if upload_url.startswith("http://minio:9000"):
+        upload_url = upload_url.replace("http://minio:9000", "http://localhost:9000")
+    return {"upload_url": upload_url, "file_key": url_data["file_key"]}
 
 
 @router.get("/", response_model=List[PostPublic])
@@ -301,7 +305,29 @@ async def read_posts(
 
     stmt = stmt.offset(pagination.skip).limit(pagination.limit)
     posts = (await session.execute(stmt)).scalars().all()
-    return posts
+    post_ids = [post.id for post in posts]
+    # Get likes for all posts in one query
+    likes_query = select(Like.post_id, Like.user_id).where(Like.post_id.in_(post_ids))
+    likes_result = await session.execute(likes_query)
+    likes = likes_result.fetchall()
+    # Build likes_count and is_liked map
+    from collections import defaultdict
+    likes_count_map = defaultdict(int)
+    user_liked_map = defaultdict(set)
+    for post_id, user_id in likes:
+        likes_count_map[post_id] += 1
+        user_liked_map[post_id].add(user_id)
+
+    user_id = getattr(current_user, 'id', None)
+    post_list = []
+    for post in posts:
+        post_dict = post.__dict__.copy()
+        post_dict['author'] = post.author
+        post_dict['media'] = post.media
+        post_dict['likes_count'] = likes_count_map.get(post.id, 0)
+        post_dict['is_liked'] = user_id in user_liked_map.get(post.id, set()) if user_id else False
+        post_list.append(PostPublic(**post_dict))
+    return post_list
 
 
 @router.get("/reels", response_model=List[PostPublic])
@@ -348,7 +374,18 @@ async def read_post(
         if not visible:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to view this post.")
 
-    return post
+    # Get likes_count and is_liked for this post
+    likes_count = await session.scalar(select(Like).where(Like.post_id == post_id).count())
+    user_id = getattr(current_user, 'id', None)
+    is_liked = False
+    if user_id:
+        is_liked = await session.scalar(select(Like).where(Like.post_id == post_id, Like.user_id == user_id).exists())
+    post_dict = post.__dict__.copy()
+    post_dict['author'] = post.author
+    post_dict['media'] = post.media
+    post_dict['likes_count'] = likes_count or 0
+    post_dict['is_liked'] = is_liked
+    return PostPublic(**post_dict)
 
 
 

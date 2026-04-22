@@ -48,7 +48,9 @@ async def create_comment(
     return new_comment
 
 
-@router.get("/", response_model=List[Comment])
+from app.schemas.post import CommentPublic
+
+@router.get("/", response_model=List[CommentPublic])
 async def read_comments(
     *,
     session: AsyncSession = Depends(get_session),
@@ -58,4 +60,10 @@ async def read_comments(
     comments = await comment_repo.get_comments_for_post(
         session, post_id=post_id, skip=pagination.skip, limit=pagination.limit
     )
-    return comments
+    # Attach author object to each comment
+    comment_list = []
+    for comment in comments:
+        comment_dict = comment.__dict__.copy()
+        comment_dict['author'] = comment.author
+        comment_list.append(CommentPublic(**comment_dict))
+    return comment_list

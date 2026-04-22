@@ -27,6 +27,8 @@ class PostPublic(PostBase):
     post_type: PostType
     author: UserPublic
     media: List[MediaCreate] = []  # ensure default list
+    likes_count: int = 0
+    is_liked: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -38,3 +40,16 @@ class PresignedUrlResponse(BaseModel):
 class CommentCreate(BaseModel):
     content: str
     parent_comment_id: Optional[str] = None
+
+
+from app.schemas.auth import UserPublic
+
+class CommentPublic(BaseModel):
+    id: str
+    content: str
+    author_id: str
+    post_id: str
+    parent_comment_id: Optional[str] = None
+    created_at: Optional[str] = None
+    author: UserPublic
+    model_config = ConfigDict(from_attributes=True)
