@@ -13,4 +13,4 @@ DELETE FROM "user" WHERE email = 'johndoe123@co.com';
 
 python -m app.main
 
-uvicorn app.main:app --port 10000 --reload
+uvicorn app.main:app --port 8000 --reload

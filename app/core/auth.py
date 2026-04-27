@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 import jwt, logging
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 from fastapi import Request, Depends, Response, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from typing import Optional
@@ -18,7 +19,9 @@ from app.errors import UnAuthenticated, UserNotFound, InvalidToken
 # passwd_context = CryptContext(schemes=["bcrypt"])
 
 passwd_context = CryptContext(
-    schemes=["bcrypt_sha256"],
+    # include common schemes to allow verification of hashes created with
+    # different algorithms (helps during migrations or mixed-format DBs)
+    schemes=["bcrypt_sha256", "bcrypt", "pbkdf2_sha256"],
     deprecated="auto"
 )
 
@@ -48,7 +51,17 @@ def generate_passwd_hash(password: str) -> str:
 
 
 def verify_password(password: str, hash: str) -> bool:
-    return passwd_context.verify(password, hash)
+    try:
+        return passwd_context.verify(password, hash)
+    except UnknownHashError:
+        # Hash format not recognized by CryptContext — treat as authentication failure
+        # Log a redacted sample for debugging (do NOT log full hashes in production).
+        try:
+            redacted = f"{hash[:6]}...len={len(hash)}"
+        except Exception:
+            redacted = "<unavailable>"
+        logger.warning("Unrecognized password hash format for user (sample=%s)", redacted)
+        return False
 
 def get_password_hash(password: str):
     return passwd_context.hash(password)
