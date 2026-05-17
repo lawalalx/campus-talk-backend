@@ -17,6 +17,10 @@ from app.schemas.post import PostPublic
 from app.schemas.auth import TokenUser
 from app.db.repositories.institution_repo import institution_repo
 from app.tasks.media_tasks import process_video_thumbnail
+from app.utils.cache import (
+    get_cache, set_cache, delete_pattern,
+    key_institution, key_institution_posts,
+)
 # from app.services.rag_service import ingest_document_background
 
 router = APIRouter()
@@ -80,6 +84,13 @@ async def get_institution(
     institution_id: str,
     session: AsyncSession = Depends(get_session),
 ):
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = key_institution(institution_id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return InstitutionPublic.model_validate(cached)
+    # ─────────────────────────────────────────────────────────────
+
     inst = await institution_repo.get(session, id=institution_id)
     if not inst:
         raise HTTPException(status_code=404, detail="Institution not found")
@@ -87,15 +98,22 @@ async def get_institution(
     posts_count = await institution_repo.get_posts_count(session, inst)
     students_count = len(inst.students) if hasattr(inst, "students") else 0
 
-    return InstitutionPublic.model_validate({
+    result = InstitutionPublic.model_validate({
         **inst.model_dump(),
         "students_count": students_count,
         "posts_count": posts_count,
     })
 
+    # ── Store in cache ────────────────────────────────────────────
+    await set_cache(cache_key, result.model_dump(mode='json'), ttl=settings.REDIS_CACHE_TTL_PROFILE)
+    # ─────────────────────────────────────────────────────────────
+
+    return result
 
 
 
+
+@router.get("/{institution_id}/post", response_model=List[PostPublic])
 @router.get("/{institution_id}/post", response_model=List[PostPublic])
 async def get_posts_by_institution(
     *,
@@ -108,6 +126,18 @@ async def get_posts_by_institution(
     """
     Fetch all posts belonging to a specific institution by ID.
     """
+    user_id = getattr(current_user, 'id', None)
+
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = key_institution_posts(
+        institution_id, user_id, pagination.skip, pagination.limit,
+        post_type.value if post_type else None,
+    )
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [PostPublic.model_validate(item) for item in cached]
+    # ─────────────────────────────────────────────────────────────
+
     stmt = (
         select(Post)
         .where(Post.school_scope == institution_id)
@@ -124,8 +154,26 @@ async def get_posts_by_institution(
 
     stmt = stmt.offset(pagination.skip).limit(pagination.limit)
     
-    result = await session.execute(stmt)
-    return result.scalars().all()
+    posts = (await session.execute(stmt)).scalars().all()
+    post_list = []
+    for p in posts:
+        p_dict = p.__dict__.copy()
+        p_dict['author'] = p.author
+        p_dict['media'] = [
+            {"media_type": m.media_type, "url": m.url, "file_metadata": m.file_metadata}
+            for m in p.media
+        ]
+        post_list.append(PostPublic(**p_dict))
+
+    # ── Store in cache ────────────────────────────────────────────
+    await set_cache(
+        cache_key,
+        [p.model_dump(mode='json') for p in post_list],
+        ttl=settings.REDIS_CACHE_TTL_FEED,
+    )
+    # ─────────────────────────────────────────────────────────────
+
+    return post_list
 
 
 
@@ -224,7 +272,16 @@ async def create_institution_post(
     result = await session.execute(
         select(Post).options(selectinload(Post.author), selectinload(Post.media)).where(Post.id == post.id)
     )
-    return result.scalar_one()
+    new_post = result.scalar_one()
+
+    # Invalidate institution posts cache and general feed caches
+    background_tasks.add_task(delete_pattern, f"ct:inst_posts:{institution_id}:*")
+    background_tasks.add_task(delete_pattern, "ct:feed:*")
+    background_tasks.add_task(delete_pattern, "ct:reels:*")
+    # Institution profile counts also change
+    background_tasks.add_task(delete_pattern, key_institution(institution_id))
+
+    return new_post
 
 
 

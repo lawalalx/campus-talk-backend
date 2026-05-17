@@ -30,6 +30,10 @@ from app.db.repositories.post_repo import post_repo
 from app.services.media_service import media_service
 from app.api.deps import pagination_params
 from app.tasks.media_tasks import process_video_thumbnail
+from app.utils.cache import (
+    get_cache, set_cache, delete_cache, delete_pattern,
+    key_feed, key_reels, key_post,
+)
 
 router = APIRouter()
 
@@ -251,7 +255,13 @@ async def create_post(
         .where(Post.id == post.id)
     )
 
-    return result.scalar_one()
+    new_post = result.scalar_one()
+
+    # Invalidate feed / reels caches so the new post appears immediately.
+    background_tasks.add_task(delete_pattern, "ct:feed:*")
+    background_tasks.add_task(delete_pattern, "ct:reels:*")
+
+    return new_post
 
 
 
@@ -293,6 +303,15 @@ async def read_posts(
     Retrieve posts for the main feed (type = POST).
     Can filter by school scope.
     """
+    user_id = getattr(current_user, 'id', None)
+
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = key_feed(user_id, pagination.skip, pagination.limit, school_scope)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [PostPublic.model_validate(item) for item in cached]
+    # ─────────────────────────────────────────────────────────────
+
     stmt = (
         select(Post)
         .where(Post.post_type == PostType.POST)
@@ -314,11 +333,10 @@ async def read_posts(
     from collections import defaultdict
     likes_count_map = defaultdict(int)
     user_liked_map = defaultdict(set)
-    for post_id, user_id in likes:
+    for post_id, user_id_like in likes:
         likes_count_map[post_id] += 1
-        user_liked_map[post_id].add(user_id)
+        user_liked_map[post_id].add(user_id_like)
 
-    user_id = getattr(current_user, 'id', None)
     post_list = []
     for post in posts:
         post_dict = post.__dict__.copy()
@@ -335,6 +353,15 @@ async def read_posts(
         post_dict['likes_count'] = likes_count_map.get(post.id, 0)
         post_dict['is_liked'] = user_id in user_liked_map.get(post.id, set()) if user_id else False
         post_list.append(PostPublic(**post_dict))
+
+    # ── Store in cache ────────────────────────────────────────────
+    await set_cache(
+        cache_key,
+        [p.model_dump(mode='json') for p in post_list],
+        ttl=settings.REDIS_CACHE_TTL_FEED,
+    )
+    # ─────────────────────────────────────────────────────────────
+
     return post_list
 
 
@@ -348,17 +375,57 @@ async def read_reels(
     """
     Retrieve all posts of type 'reel'.
     """
+    user_id = getattr(current_user, 'id', None)
+
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = key_reels(user_id, pagination.skip, pagination.limit)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return [PostPublic.model_validate(item) for item in cached]
+    # ─────────────────────────────────────────────────────────────
+
     stmt = (
         select(Post)
         .where(Post.post_type == PostType.REEL)
         .where(await _build_feed_visibility_filter(session, current_user))
-        .options(selectinload(Post.author))
+        .options(selectinload(Post.author), selectinload(Post.media))
         .order_by(Post.created_at.desc())
         .offset(pagination.skip)
         .limit(pagination.limit)
     )
-    result = await session.execute(stmt)
-    return result.scalars().all()
+    reels = (await session.execute(stmt)).scalars().all()
+
+    reel_ids = [r.id for r in reels]
+    likes_query = select(Like.post_id, Like.user_id).where(Like.post_id.in_(reel_ids))
+    likes_rows = (await session.execute(likes_query)).fetchall()
+    from collections import defaultdict
+    likes_count_map: dict = defaultdict(int)
+    user_liked_map: dict = defaultdict(set)
+    for pid, uid in likes_rows:
+        likes_count_map[pid] += 1
+        user_liked_map[pid].add(uid)
+
+    reel_list = []
+    for reel in reels:
+        reel_dict = reel.__dict__.copy()
+        reel_dict['author'] = reel.author
+        reel_dict['media'] = [
+            {"media_type": m.media_type, "url": m.url, "file_metadata": m.file_metadata}
+            for m in reel.media
+        ]
+        reel_dict['likes_count'] = likes_count_map.get(reel.id, 0)
+        reel_dict['is_liked'] = user_id in user_liked_map.get(reel.id, set()) if user_id else False
+        reel_list.append(PostPublic(**reel_dict))
+
+    # ── Store in cache ────────────────────────────────────────────
+    await set_cache(
+        cache_key,
+        [r.model_dump(mode='json') for r in reel_list],
+        ttl=settings.REDIS_CACHE_TTL_FEED,
+    )
+    # ─────────────────────────────────────────────────────────────
+
+    return reel_list
 
 
 @router.get("/{post_id}", response_model=PostPublic)
@@ -371,6 +438,15 @@ async def read_post(
     """
     Get a single post by its ID, including author info.
     """
+    user_id = getattr(current_user, 'id', None)
+
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = key_post(post_id, user_id)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return PostPublic.model_validate(cached)
+    # ─────────────────────────────────────────────────────────────
+
     post = await post_repo.get_by_id_with_author(session, id=post_id)
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Post not found")
@@ -384,7 +460,6 @@ async def read_post(
 
     # Get likes_count and is_liked for this post
     likes_count = await session.scalar(select(Like).where(Like.post_id == post_id).count())
-    user_id = getattr(current_user, 'id', None)
     is_liked = False
     if user_id:
         is_liked = await session.scalar(select(Like).where(Like.post_id == post_id, Like.user_id == user_id).exists())
@@ -400,7 +475,13 @@ async def read_post(
     ]
     post_dict['likes_count'] = likes_count or 0
     post_dict['is_liked'] = is_liked
-    return PostPublic(**post_dict)
+    result = PostPublic(**post_dict)
+
+    # ── Store in cache ────────────────────────────────────────────
+    await set_cache(cache_key, result.model_dump(mode='json'), ttl=settings.REDIS_CACHE_TTL_POST)
+    # ─────────────────────────────────────────────────────────────
+
+    return result
 
 
 
@@ -493,3 +574,8 @@ async def delete_post(
 
     await session.delete(post)
     await session.commit()
+
+    # Invalidate caches for this post and all feeds/reels
+    await delete_pattern(f"ct:post:{post_id}:*")
+    await delete_pattern("ct:feed:*")
+    await delete_pattern("ct:reels:*")

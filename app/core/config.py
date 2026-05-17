@@ -35,8 +35,15 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str
     S3_PRESIGNED_URL_EXPIRATION: int = 3600 # 1 hour
 
-    # Rate Limiting
+    # Redis (Rate Limiting + Caching)
     REDIS_URL: str
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_USERNAME: str = "default"
+    REDIS_PASSWORD: str = ""
+    REDIS_CACHE_TTL_FEED: int = 30       # seconds – feed / reels lists
+    REDIS_CACHE_TTL_POST: int = 60       # seconds – single post
+    REDIS_CACHE_TTL_PROFILE: int = 300   # seconds – user / institution profiles
 
     # RAG / LLM
     GROQ_API_KEY: Optional[str] = None

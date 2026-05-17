@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.core.manager import manager
 from app.core.middleware import register_middleware
 from app.db.session import create_tables
+from app.utils.cache import connect_redis, disconnect_redis
 from app.api.routers import (
     auth,
     users,
@@ -35,9 +36,11 @@ async def lifespan(app: FastAPI):
     # On startup
     logger.info("Starting up...")
     await create_tables()
+    await connect_redis()
     yield
     # On shutdown
     logger.info("Shutting down...")
+    await disconnect_redis()
 
 
 app = FastAPI(

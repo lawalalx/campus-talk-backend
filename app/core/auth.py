@@ -53,14 +53,14 @@ def generate_passwd_hash(password: str) -> str:
 def verify_password(password: str, hash: str) -> bool:
     try:
         return passwd_context.verify(password, hash)
-    except UnknownHashError:
-        # Hash format not recognized by CryptContext — treat as authentication failure
-        # Log a redacted sample for debugging (do NOT log full hashes in production).
+    except (UnknownHashError, ValueError) as e:
+        # Hash format not recognized by CryptContext OR backend rejected input
+        # (e.g., bcrypt backend raising ValueError for >72-byte secrets).
         try:
             redacted = f"{hash[:6]}...len={len(hash)}"
         except Exception:
             redacted = "<unavailable>"
-        logger.warning("Unrecognized password hash format for user (sample=%s)", redacted)
+        logger.warning("Password verification failed (%s) for user (sample=%s)", type(e).__name__, redacted)
         return False
 
 def get_password_hash(password: str):

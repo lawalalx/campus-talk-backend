@@ -9,6 +9,7 @@ from app.db.session import get_session
 from app.core.auth import get_current_user_dependency
 from app.schemas.auth import TokenUser, UserPublic
 from app.db.repositories.user_repo import user_repo
+from app.utils.cache import get_cache, set_cache, delete_cache, key_user
 
 router = APIRouter()
 
