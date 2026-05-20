@@ -17,14 +17,11 @@ fastapi-mail==1.5.8
 langchain
 
 # Auth
-passlib
 resend
-bcrypt==4.3.0
+passlib==1.7.4
+bcrypt==4.0.1
 
-# passlib==1.7.4
-# bcrypt==4.0.1
-
-PyJWT
+PyJWT4
 boto3
 python-dotenv
 
