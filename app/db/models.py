@@ -41,6 +41,12 @@ class NotificationType(str, enum.Enum):
     CHANNEL_INVITE = "channel_invite"
 
 
+class SentimentLabel(str, enum.Enum):
+    POSITIVE = "positive"
+    NEUTRAL = "neutral"
+    NEGATIVE = "negative"
+
+
 
 def generate_uuid() -> str:
     return str(uuid.uuid4())
@@ -303,6 +309,20 @@ class Message(SQLModel, table=True):
 
     conversation: Conversation = Relationship(back_populates="messages", sa_relationship_kwargs={"lazy": "selectin"})
     sender: User = Relationship(back_populates="messages_sent", sa_relationship_kwargs={"lazy": "selectin"})
+
+
+class MessageSentiment(SQLModel, table=True):
+    id: str = Field(default_factory=generate_uuid, primary_key=True)
+    message_id: str = Field(foreign_key="message.id", index=True)
+    conversation_id: str = Field(foreign_key="conversation.id", index=True)
+    institution_id: Optional[str] = Field(foreign_key="institution.id", default=None, index=True)
+    score: float
+    label: SentimentLabel = Field(sa_column=Column(Enum(SentimentLabel)))
+    analyzed_text: str
+    analyzed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True))
+    )
 
 
 class StudentResource(SQLModel, table=True):

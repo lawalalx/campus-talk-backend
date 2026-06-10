@@ -1,14 +1,20 @@
 # app/main.py
 import logging
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from sqlmodel import select
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.core.config import settings
 from app.core.manager import manager
+from app.core.auth import decode_token
 from app.core.middleware import register_middleware
+from app.errors import register_all_errors
 from app.db.session import create_tables
+from app.db.session import get_async_session_maker
+from app.db.models import ConversationUserLink
 from app.utils.cache import connect_redis, disconnect_redis
 from app.api.routers import (
     auth,
@@ -58,6 +64,7 @@ Instrumentator().instrument(app).expose(app)
 
 # CORS Middleware
 register_middleware(app)
+register_all_errors(app)
 
 
 
@@ -97,6 +104,48 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
+
+
+@app.websocket("/ws/messages/{conversation_id}")
+async def websocket_messages_endpoint(websocket: WebSocket, conversation_id: str):
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008)
+        return
+
+    payload = decode_token(token, settings)
+    if not payload or not payload.get("id"):
+        await websocket.close(code=1008)
+        return
+
+    user_id = payload.get("id")
+
+    session_maker = get_async_session_maker()
+    async with session_maker() as session:
+        membership_stmt = select(ConversationUserLink).where(
+            ConversationUserLink.conversation_id == conversation_id,
+            ConversationUserLink.user_id == user_id,
+        )
+        member_row = (await session.execute(membership_stmt)).scalars().first()
+        if not member_row:
+            await websocket.close(code=1008)
+            return
+
+    await manager.connect_conversation(websocket, conversation_id)
+    try:
+        while True:
+            raw_message = await websocket.receive_text()
+            await manager.send_conversation_message(
+                json.dumps({
+                    "type": "message.echo",
+                    "conversation_id": conversation_id,
+                    "sender_id": user_id,
+                    "content": raw_message,
+                }),
+                conversation_id,
+            )
+    except WebSocketDisconnect:
+        manager.disconnect_conversation(websocket, conversation_id)
 
 
 

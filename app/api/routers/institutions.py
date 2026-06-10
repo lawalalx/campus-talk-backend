@@ -12,11 +12,18 @@ from app.db.session import get_session
 from app.core.auth import get_current_user_dependency, get_optional_current_user_dependency
 from app.core.config import settings
 from app.db.models import Institution, Media, MediaType, Post, PostType, UploadedDocument, UserRole, PostPrivacy, StudentProfile, User
-from app.schemas.institution import InstitutionPublic, UploadedDocumentCreate, UploadedDocumentPublic, InstitutionTimelineResponse
+from app.schemas.institution import (
+    InstitutionPublic,
+    UploadedDocumentCreate,
+    UploadedDocumentPublic,
+    InstitutionTimelineResponse,
+    InstitutionSentimentBankResponse,
+)
 from app.schemas.post import PostPublic
 from app.schemas.auth import TokenUser
 from app.db.repositories.institution_repo import institution_repo
 from app.tasks.media_tasks import process_video_thumbnail
+from app.services.sentiment_service import get_sentiment_summary_for_institution
 from app.utils.cache import (
     get_cache, set_cache, delete_pattern,
     key_institution, key_institution_posts,
@@ -430,3 +437,30 @@ async def chatbot_query(
         # "sources": result["sources"],
         "institution_id": institution_id,
     }
+
+
+@router.get("/{institution_id}/sentiment-bank", response_model=InstitutionSentimentBankResponse)
+async def get_institution_sentiment_bank(
+    institution_id: str,
+    limit: int = 50,
+    session: AsyncSession = Depends(get_session),
+    current_user: TokenUser = Depends(get_current_user_dependency(settings=settings)),
+):
+    inst = await institution_repo.get(session, id=institution_id)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Institution not found")
+
+    if current_user.role not in [UserRole.INSTITUTION, UserRole.ADMIN]:
+        raise HTTPException(status_code=403, detail="Only institution and admin users can view sentiment bank")
+
+    if current_user.role != UserRole.ADMIN:
+        is_admin = await institution_repo.is_user_institution_admin(session, current_user.id, institution_id)
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="You are not an admin for this institution")
+
+    summary = await get_sentiment_summary_for_institution(
+        session,
+        institution_id=institution_id,
+        limit=max(1, min(limit, 200)),
+    )
+    return InstitutionSentimentBankResponse.model_validate(summary)

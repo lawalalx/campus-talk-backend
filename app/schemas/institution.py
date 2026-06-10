@@ -56,3 +56,20 @@ class UploadedDocumentPublic(BaseModel):
     created_at: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MessageSentimentEntry(BaseModel):
+    message_id: str
+    conversation_id: str
+    score: float
+    label: str
+    text: str
+    analyzed_at: datetime
+
+
+class InstitutionSentimentBankResponse(BaseModel):
+    institution_id: str
+    sample_size: int
+    average_score: float
+    distribution: dict
+    recent_entries: List[MessageSentimentEntry]

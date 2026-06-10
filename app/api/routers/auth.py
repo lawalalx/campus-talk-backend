@@ -352,6 +352,7 @@ async def read_users_me(
     If the user has an institution profile, include institution profile details.
     """
 
+    print("\n\nCurrent user from token:", current_user)
 
     user_data = await user_repo.get_by_email(session, email=current_user.email)
     result = {

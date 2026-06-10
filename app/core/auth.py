@@ -28,8 +28,8 @@ passwd_context = CryptContext(
 
 
 
-
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 300
 logger = logging.getLogger(__name__)
 
 
@@ -41,8 +41,8 @@ class OptionalOAuth2Scheme(OAuth2PasswordBearer):
             return None
 
 # Replace with the optional version
-optional_oauth2_scheme = OptionalOAuth2Scheme(tokenUrl="token")
-
+# optional_oauth2_scheme = OptionalOAuth2Scheme(tokenUrl="token")
+optional_oauth2_scheme = OptionalOAuth2Scheme(tokenUrl="/auth/login")
 
 def generate_passwd_hash(password: str) -> str:
     hash = passwd_context.hash(password)
@@ -69,31 +69,37 @@ def get_password_hash(password: str):
 
 def decode_token(token: str, settings: BaseSettings) -> dict:
     try:
-        if isinstance(token, str):
-            token = token.encode("utf-8")
-
-        token_data = jwt.decode(
-            jwt=token, key=settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        # if isinstance(token, str):
+#         #     token = token.encode("utf-8")
+        return jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
         )
-
-        return token_data
-
-    except jwt.PyJWTError as e:
-        logging.exception(e)
-        return None
-
-
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 300
-
+    except jwt.ExpiredSignatureError:
+        return {"error": "Token expired. Please login again."}
+    except jwt.InvalidTokenError:
+        raise UnAuthenticated("Invalid authentication token.")
+    
 
 def create_access_token(user, expires_delta: timedelta | None = None):
+    # Avoid triggering async lazy-loads on detached/expired ORM objects.
+    user_dict = getattr(user, "__dict__", {}) if user is not None else {}
+    user_id = user_dict.get("id", getattr(user, "id", None))
+    user_email = user_dict.get("email", getattr(user, "email", None))
+    user_verified = user_dict.get("is_verified", getattr(user, "is_verified", False))
+    user_full_name = user_dict.get("full_name", getattr(user, "full_name", None))
+    user_role = user_dict.get("role", getattr(user, "role", None))
+
+    if isinstance(user_role, UserRole):
+        user_role = user_role.value
+
     to_encode = {
-        "sub": user.email,
-        "id": str(user.id),
-        "is_verified": user.is_verified,
-        "full_name": user.full_name,
-        "role": user.role,
+        "sub": user_email,
+        "id": str(user_id),
+        "is_verified": user_verified,
+        "full_name": user_full_name,
+        "role": user_role,
         "exp": datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     }
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
@@ -116,31 +122,24 @@ def get_current_user_dependency(settings: BaseSettings):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        try:
-            payload = decode_token(campustalk_access_token, settings)
-            email = payload.get("sub")
-            user_id = payload.get("id")
-            full_name = payload.get("full_name")
-            role = payload.get("role")
+        payload = decode_token(campustalk_access_token, settings)
+        email = payload.get("sub")
+        user_id = payload.get("id")
+        full_name = payload.get("full_name")
+        role = payload.get("role")
 
-            if not email or not user_id:
-                raise UserNotFound()
+        if not email or not user_id:
+            raise UserNotFound()
 
-            return TokenUser(
-                full_name=full_name,
-                email=email,
-                id=user_id,
-                is_verified=payload.get("is_verified"),
-                role=role,
-                campustalk_access_token=campustalk_access_token,
-                token_type="bearer"
-            )
-
-        except jwt.ExpiredSignatureError:
-            raise InvalidToken()
-        except jwt.PyJWTError as e:
-            # use your logger if needed
-            raise UnAuthenticated()
+        return TokenUser(
+            full_name=full_name,
+            email=email,
+            id=user_id,
+            is_verified=payload.get("is_verified"),
+            role=role,
+            campustalk_access_token=campustalk_access_token,
+            token_type="bearer"
+        )
 
     return get_current_user
 
@@ -228,7 +227,7 @@ def json_serializer(obj):
 def require_role(required_role: UserRole):
     """Dependency factory for requiring a specific user role."""
     def role_checker(current_user: TokenUser = Depends(get_current_user_dependency(settings=settings))) -> User:
-        if current_user.role != required_role and current_user.role != UserRole.ADMIN:
+        if current_user.role != required_role and current_user.role.value != UserRole.ADMIN.value:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Operation not permitted. Requires '{required_role.value}' role."

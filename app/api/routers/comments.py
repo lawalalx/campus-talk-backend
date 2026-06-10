@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.db.repositories.base import BaseRepository
 from app.services.notification_service import notification_service, NotificationType
 from app.api.deps import pagination_params
+from app.services.access_control import can_view_post, get_user_institution_ids
 
 router = APIRouter()
 post_repo = BaseRepository(Post)
@@ -30,6 +31,10 @@ async def create_comment(
     post = await post_repo.get(session, id=post_id)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
+
+    user_institution_ids = await get_user_institution_ids(session, current_user.id)
+    if not can_view_post(post, current_user, user_institution_ids):
+        raise HTTPException(status_code=403, detail="You do not have permission to interact with this post")
         
     comment = Comment.from_orm(
         comment_in,
@@ -55,8 +60,17 @@ async def read_comments(
     *,
     session: AsyncSession = Depends(get_session),
     post_id: str,
-    pagination: pagination_params = Depends()
+    pagination: pagination_params = Depends(),
+    current_user: TokenUser = Depends(get_current_user_dependency(settings=settings))
 ):
+    post = await post_repo.get(session, id=post_id)
+    if not post:
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    user_institution_ids = await get_user_institution_ids(session, current_user.id)
+    if not can_view_post(post, current_user, user_institution_ids):
+        raise HTTPException(status_code=403, detail="You do not have permission to view these comments")
+
     comments = await comment_repo.get_comments_for_post(
         session, post_id=post_id, skip=pagination.skip, limit=pagination.limit
     )

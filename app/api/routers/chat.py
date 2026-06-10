@@ -33,4 +33,4 @@ async def chat_endpoint(request: ChatRequest):
         thread_id=config["configurable"]["thread_id"]
     )
   except Exception as e:
-    raise HTTPException(status_status=500, detail=str(e))
+    raise HTTPException(status_code=500, detail=str(e))
