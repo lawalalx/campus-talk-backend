@@ -121,7 +121,6 @@ async def get_institution(
 
 
 @router.get("/{institution_id}/post", response_model=List[PostPublic])
-@router.get("/{institution_id}/post", response_model=List[PostPublic])
 async def get_posts_by_institution(
     *,
     institution_id: str,

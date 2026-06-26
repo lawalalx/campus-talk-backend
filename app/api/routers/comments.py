@@ -36,9 +36,10 @@ async def create_comment(
     if not can_view_post(post, current_user, user_institution_ids):
         raise HTTPException(status_code=403, detail="You do not have permission to interact with this post")
         
-    comment = Comment.from_orm(
-        comment_in,
-        update={"author_id": current_user.id, "post_id": post_id}
+    comment = Comment(
+        **comment_in.model_dump(exclude_none=True),
+        author_id=current_user.id,
+        post_id=post_id,
     )
     new_comment = await comment_repo.create(session, obj_in=comment)
     
@@ -48,7 +49,7 @@ async def create_comment(
             session,
             user_id=post.author_id,
             notification_type=NotificationType.COMMENT,
-            content={"message": f"{current_user.username} commented on your post.", "post_id": str(post_id)}
+            content={"message": f"{current_user.full_name or current_user.email} commented on your post.", "post_id": str(post_id)}
         )
     return new_comment
 

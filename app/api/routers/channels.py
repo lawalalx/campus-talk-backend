@@ -30,7 +30,10 @@ async def create_channel(
     """
     Create a new channel. The creator automatically becomes an admin member.
     """
-    channel = Channel.from_orm(channel_in, update={"created_by": current_user.id})
+    channel = Channel(
+        **channel_in.model_dump(exclude_none=True),
+        created_by=current_user.id,
+    )
     
     # Add creator as the first member and admin
     link = UserChannelLink(user_id=current_user.id, channel_id=channel.id, is_admin=True)

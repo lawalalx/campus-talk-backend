@@ -1,5 +1,4 @@
 # app/api/routers/communities.py
-from tokenize import Token
 from fastapi import APIRouter, Depends, HTTPException, status
 import uuid
 from typing import List
@@ -30,7 +29,10 @@ async def create_community(
     """
     Create a new community. The creator is automatically a member.
     """
-    community = Community.from_orm(community_in, update={"created_by": current_user.id})
+    community = Community(
+        **community_in.model_dump(exclude_none=True),
+        created_by=current_user.id,
+    )
     community.members.append(current_user)
     new_community = await community_repo.create(session, obj_in=community)
     return new_community

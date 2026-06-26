@@ -66,21 +66,40 @@ async def create_post(
     is_school_scope: bool = Form(False),
 
     # media
-    images: Optional[list[UploadFile]] = File(None),
+    images: Optional[list[UploadFile]] = File(None, description="Upload multiple image files (JPEG/PNG)"),
+    image1: Optional[UploadFile] = File(None, description="Single image upload option 1"),
+    image2: Optional[UploadFile] = File(None, description="Single image upload option 2"),
+    image3: Optional[UploadFile] = File(None, description="Single image upload option 3"),
+    image4: Optional[UploadFile] = File(None, description="Single image upload option 4"),
+    image5: Optional[UploadFile] = File(None, description="Single image upload option 5"),
     video: Optional[UploadFile] = File(None),
 ):
     """
     Create a new post (regular or reel).
 
-    For posts with media:
-    - Get a presigned URL from `/media/presigned-url`.
-    - Upload the file to S3.
-    - Include the media URL in the `content` or media list.
+    Images can be uploaded via:
+    - The `images` field (list, works with programmatic clients)
+    - Individual `image1` through `image5` fields (works with Swagger UI)
     """
+    # ═════════════════════════════════════════
+    # AGGREGATE IMAGE UPLOADS
+    # ═════════════════════════════════════════
+    # Collect all image uploads from both the list field and individual fields
+    if images is None:
+        images = []
+    else:
+        images = list(images)  # ensure it's a mutable list
 
-    # -----------------------------
+    for single_img in [image1, image2, image3, image4, image5]:
+        if single_img is not None:
+            images.append(single_img)
+
+    # Remove None-entries (in case any uploads were sent as empty)
+    images = [img for img in images if img is not None]
+
+    # ═════════════════════════════════════════
     # VALIDATION
-    # -----------------------------
+    # ═════════════════════════════════════════
     if images and video:
         raise HTTPException(400, "Cannot upload images and video together")
 
@@ -90,12 +109,9 @@ async def create_post(
     if post_type == PostType.POST and not (content or images):
         raise HTTPException(400, "Post must have text or image")
 
-    # -----------------------------
+    # ═════════════════════════════════════════
     # SCHOOL SCOPE AUTO-SET
-    # -----------------------------
-    # -----------------------------
-    # GET INSTITUTION ID
-    # -----------------------------
+    # ═════════════════════════════════════════
     final_institution_scope = None
     requires_school_scope = is_school_scope or privacy == PostPrivacy.SCHOOL_ONLY
     if requires_school_scope:

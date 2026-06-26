@@ -34,6 +34,9 @@ async def file_complaint(
             detail="Exactly one of reported_post_id, reported_comment_id, or reported_user_id must be provided."
         )
 
-    complaint = Complaint.from_orm(complaint_in, update={"reporter_id": current_user.id})
+    complaint = Complaint(
+        **complaint_in.model_dump(exclude_none=True),
+        reporter_id=current_user.id,
+    )
     new_complaint = await complaint_repo.create(session, obj_in=complaint)
     return new_complaint
